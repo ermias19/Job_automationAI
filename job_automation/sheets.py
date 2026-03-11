@@ -22,22 +22,43 @@ class SheetExporter:
 
         remote_status = "skipped"
         if rows:
-            try:
-                if self.settings.google_apps_script_webapp_url:
-                    self._append_via_apps_script(rows)
-                    remote_status = "apps_script"
-                elif (
-                    self.settings.google_sheets_spreadsheet_id
-                    and self.settings.google_service_account_json
-                    and self.settings.google_service_account_json.exists()
-                ):
-                    self._append_via_service_account(rows)
-                    remote_status = "service_account"
-            except Exception as exc:
-                remote_status = f"error:{exc.__class__.__name__}"
-                logger.exception("Remote sheet export failed; local CSV was still written")
+            remote_status = self._export_remote(rows)
 
         return {"csv_path": str(csv_path), "remote_status": remote_status}
+
+    def _export_remote(self, rows: list[dict]) -> str:
+        # Prefer service account because it is more reliable than public Apps Script endpoints.
+        can_use_service_account = (
+            self.settings.google_sheets_spreadsheet_id
+            and self.settings.google_service_account_json
+            and self.settings.google_service_account_json.exists()
+        )
+        can_use_apps_script = bool(self.settings.google_apps_script_webapp_url)
+
+        if can_use_service_account:
+            try:
+                self._append_via_service_account(rows)
+                return "service_account"
+            except Exception:
+                logger.exception("Service-account export failed; trying Apps Script fallback")
+                if can_use_apps_script:
+                    try:
+                        self._append_via_apps_script(rows)
+                        return "apps_script_fallback"
+                    except Exception as exc:
+                        logger.exception("Apps Script fallback also failed; local CSV was still written")
+                        return f"error:{exc.__class__.__name__}"
+                return "error:ServiceAccountExportFailed"
+
+        if can_use_apps_script:
+            try:
+                self._append_via_apps_script(rows)
+                return "apps_script"
+            except Exception as exc:
+                logger.exception("Apps Script export failed; local CSV was still written")
+                return f"error:{exc.__class__.__name__}"
+
+        return "skipped"
 
     def _write_local_csv(self, path: Path, rows: list[dict]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
