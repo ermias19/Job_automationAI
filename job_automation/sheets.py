@@ -95,11 +95,18 @@ class SheetExporter:
         )
         spreadsheet = client.open_by_key(self.settings.google_sheets_spreadsheet_id)
         worksheet = self._get_or_create_worksheet(spreadsheet)
-        headers = self._ensure_headers(worksheet)
+        headers, table_range = self._ensure_headers(worksheet)
+        self._style_header_row(worksheet, len(headers))
+
+        append_kwargs = {
+            "value_input_option": "USER_ENTERED",
+        }
+        if table_range:
+            append_kwargs["table_range"] = table_range
 
         worksheet.append_rows(
             [[row.get(header, "") for header in headers] for row in rows],
-            value_input_option="USER_ENTERED",
+            **append_kwargs,
         )
 
     def _get_or_create_worksheet(self, spreadsheet):
@@ -112,21 +119,68 @@ class SheetExporter:
                 cols=len(DEFAULT_SHEET_HEADERS),
             )
 
-    def _ensure_headers(self, worksheet) -> list[str]:
+    def _ensure_headers(self, worksheet) -> tuple[list[str], str | None]:
         existing_headers = [value for value in worksheet.row_values(1) if value]
         if not existing_headers:
-            worksheet.append_row(DEFAULT_SHEET_HEADERS)
-            return list(DEFAULT_SHEET_HEADERS)
+            try:
+                worksheet.append_row(DEFAULT_SHEET_HEADERS)
+                return list(DEFAULT_SHEET_HEADERS), None
+            except Exception:
+                # Some sheets protect row 1 while allowing row appends.
+                logger.warning(
+                    "Header row could not be written; appending data starting from A2"
+                )
+                return list(DEFAULT_SHEET_HEADERS), "A2"
 
         missing_headers = [
             header for header in DEFAULT_SHEET_HEADERS if header not in existing_headers
         ]
         if not missing_headers:
-            return existing_headers
+            return existing_headers, None
 
         merged_headers = existing_headers + missing_headers
-        worksheet.update("A1", [merged_headers])
-        return merged_headers
+        try:
+            worksheet.update("A1", [merged_headers])
+            return merged_headers, None
+        except Exception:
+            logger.warning("Could not update header row; using existing headers as-is")
+            return existing_headers, None
+
+    def _style_header_row(self, worksheet, header_count: int) -> None:
+        if header_count <= 0:
+            return
+
+        end_col = self._column_index_to_letter(header_count)
+        header_range = f"A1:{end_col}1"
+        try:
+            worksheet.format(
+                header_range,
+                {
+                    "backgroundColor": {
+                        "red": 0.20,
+                        "green": 0.60,
+                        "blue": 0.20,
+                    },
+                    "textFormat": {
+                        "foregroundColor": {
+                            "red": 1.0,
+                            "green": 1.0,
+                            "blue": 1.0,
+                        },
+                        "bold": True,
+                    },
+                },
+            )
+        except Exception:
+            logger.warning("Could not style header row; continuing without formatting")
+
+    @staticmethod
+    def _column_index_to_letter(index: int) -> str:
+        letters: list[str] = []
+        while index > 0:
+            index, rem = divmod(index - 1, 26)
+            letters.append(chr(65 + rem))
+        return "".join(reversed(letters))
 
     @staticmethod
     def _row(run_id: str, searched_at: str, match: MatchResult) -> dict:
