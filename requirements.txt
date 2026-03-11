@@ -1,0 +1,10 @@
+openai>=1.30.0
+python-jobspy>=1.1.79
+fastapi>=0.115.0
+uvicorn>=0.30.0
+requests>=2.32.0
+python-dotenv>=1.0.1
+gspread>=6.1.0
+google-auth>=2.35.0
+PyPDF2>=3.0.1
+APScheduler>=3.10.4
