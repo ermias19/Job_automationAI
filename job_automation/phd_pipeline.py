@@ -47,10 +47,12 @@ class PhdAutomationPipeline:
         assessments = engine.evaluate_jobs(opportunities)
         logger.info("Completed fit evaluation for %s opportunities", len(assessments))
 
+        # For PhD outreach we keep all evaluated leads and rank by fit score.
+        # Job-style ai_fit gating is too strict for research-opportunity discovery.
         matches = [
             MatchResult(job=job, assessment=assessments[job.dedupe_key()])
             for job in opportunities
-            if job.dedupe_key() in assessments and assessments[job.dedupe_key()].ai_fit
+            if job.dedupe_key() in assessments
         ]
         matches.sort(key=lambda item: item.assessment.fit_score, reverse=True)
         logger.info("Kept %s PhD matches after scoring", len(matches))

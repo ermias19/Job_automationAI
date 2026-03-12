@@ -13,6 +13,25 @@ from job_automation.models import UniversityLead
 logger = logging.getLogger(__name__)
 
 
+FALLBACK_CS_UNIVERSITIES: list[tuple[str, str, str]] = [
+    ("Massachusetts Institute of Technology", "US", "https://www.mit.edu"),
+    ("Stanford University", "US", "https://www.stanford.edu"),
+    ("Carnegie Mellon University", "US", "https://www.cmu.edu"),
+    ("University of Oxford", "GB", "https://www.ox.ac.uk"),
+    ("University of Cambridge", "GB", "https://www.cam.ac.uk"),
+    ("ETH Zurich", "CH", "https://ethz.ch"),
+    ("EPFL", "CH", "https://www.epfl.ch"),
+    ("Technical University of Munich", "DE", "https://www.tum.de"),
+    ("University College London", "GB", "https://www.ucl.ac.uk"),
+    ("Imperial College London", "GB", "https://www.imperial.ac.uk"),
+    ("National University of Singapore", "SG", "https://www.nus.edu.sg"),
+    ("University of Toronto", "CA", "https://www.utoronto.ca"),
+    ("University of California, Berkeley", "US", "https://www.berkeley.edu"),
+    ("University of Washington", "US", "https://www.washington.edu"),
+    ("University of Edinburgh", "GB", "https://www.ed.ac.uk"),
+]
+
+
 class UniversityScraper:
     """Scrapes university leads from the PhDPortal ranking page."""
 
@@ -24,15 +43,19 @@ class UniversityScraper:
         logger.info("Scraping PhD universities from %s", url)
         html = self._download(url)
         if not html:
-            return []
+            logger.warning(
+                "PhD ranking page could not be downloaded. Using fallback CS university seed list."
+            )
+            return self._fallback_university_leads(source_url=url)
 
         leads = self._extract_university_leads(html=html, source_url=url)
         if not leads:
             logger.warning(
                 "Could not extract university leads from the ranking page. "
-                "The site likely changed markup or blocked scraping."
+                "The site likely changed markup or blocked scraping. "
+                "Using fallback CS university seed list."
             )
-            return []
+            return self._fallback_university_leads(source_url=url)
 
         return leads[: self.settings.phd_max_universities]
 
@@ -181,6 +204,19 @@ class UniversityScraper:
         if "," in text:
             return text.split(",")[-1].strip()
         return ""
+
+    def _fallback_university_leads(self, source_url: str) -> list[UniversityLead]:
+        leads: list[UniversityLead] = []
+        for rank, (name, country, website) in enumerate(FALLBACK_CS_UNIVERSITIES, start=1):
+            leads.append(
+                UniversityLead(
+                    university_name=name,
+                    country=country,
+                    source_url=website or source_url,
+                    rank_hint=f"seed#{rank}",
+                )
+            )
+        return leads[: self.settings.phd_max_universities]
 
 
 def normalize_phdportal_url(url: str) -> str:
