@@ -1,3 +1,5 @@
+from job_automation.reports import JOB_AUTOMATION_HEADERS, PHD_ROLE_HEADERS
+
 JOB_TITLES = [
     "Full Stack Developer",
     "Software Engineer",
@@ -30,34 +32,5 @@ COUNTRIES = [
 
 DEFAULT_SITES = ["linkedin"]
 
-DEFAULT_SHEET_HEADERS = [
-    "Job Title",
-    "Company",
-    "Location",
-    "Employment Type",
-    "Seniority",
-    "Salary Range",
-    "Applicants",
-    "Posted",
-    "Apply Link",
-    "Company URL",
-    "Job Summary",
-    "AI Fit",
-    "Resume Doc",
-    "Fit Score",
-    "Recommendation",
-    "Decision",
-    "Reasoning",
-    "Missing Skills",
-    "Candidate Highlights",
-    "Resume Focus",
-    "Resume Summary",
-    "Resume Path",
-    "Cover Letter Path",
-    "Email Intro Path",
-    "Source Site",
-    "Search Title",
-    "Search Country",
-    "Run ID",
-    "Searched At",
-]
+DEFAULT_SHEET_HEADERS = list(JOB_AUTOMATION_HEADERS)
+DEFAULT_PHD_REPORT_HEADERS = list(PHD_ROLE_HEADERS)

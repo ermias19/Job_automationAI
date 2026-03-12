@@ -73,6 +73,7 @@ class Settings:
 
     google_sheets_spreadsheet_id: str | None = None
     google_sheets_worksheet: str = "Jobs"
+    google_sheets_phd_report_worksheet: str = "phd-research-report"
     google_service_account_json: Path | None = None
     google_apps_script_webapp_url: str | None = None
 
@@ -85,6 +86,22 @@ class Settings:
 
     daily_run_hour: int = 8
     daily_run_minute: int = 0
+
+    phd_portal_universities_url: str = (
+        "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it"
+    )
+    phd_max_universities: int = 30
+    phd_professors_per_university: int = 3
+    phd_subject_keywords: list[str] = field(
+        default_factory=lambda: [
+            "computer science",
+            "distributed systems",
+            "high performance computing",
+            "networking",
+            "artificial intelligence",
+        ]
+    )
+    phd_send_emails: bool = False
 
     def effective_scraper_workers(self) -> int:
         if self.sites == ["linkedin"]:
@@ -183,6 +200,10 @@ def load_settings() -> Settings:
         tailor_top_n=int(os.getenv("TAILOR_TOP_N", "10")),
         google_sheets_spreadsheet_id=os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID") or None,
         google_sheets_worksheet=os.getenv("GOOGLE_SHEETS_WORKSHEET", "Jobs"),
+        google_sheets_phd_report_worksheet=os.getenv(
+            "GOOGLE_SHEETS_PHD_REPORT_WORKSHEET",
+            "phd-research-report",
+        ),
         google_service_account_json=_path(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
         google_apps_script_webapp_url=os.getenv("GOOGLE_APPS_SCRIPT_WEBAPP_URL") or None,
         email_to=os.getenv("EMAIL_TO") or None,
@@ -193,4 +214,23 @@ def load_settings() -> Settings:
         smtp_use_tls=_as_bool(os.getenv("SMTP_USE_TLS"), default=True),
         daily_run_hour=int(os.getenv("DAILY_RUN_HOUR", "8")),
         daily_run_minute=int(os.getenv("DAILY_RUN_MINUTE", "0")),
+        phd_portal_universities_url=os.getenv(
+            "PHD_PORTAL_UNIVERSITIES_URL",
+            "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it",
+        ),
+        phd_max_universities=int(os.getenv("PHD_MAX_UNIVERSITIES", "30")),
+        phd_professors_per_university=int(
+            os.getenv("PHD_PROFESSORS_PER_UNIVERSITY", "3")
+        ),
+        phd_subject_keywords=_csv(
+            os.getenv("PHD_SUBJECT_KEYWORDS"),
+            [
+                "computer science",
+                "distributed systems",
+                "high performance computing",
+                "networking",
+                "artificial intelligence",
+            ],
+        ),
+        phd_send_emails=_as_bool(os.getenv("PHD_SEND_EMAILS"), default=False),
     )

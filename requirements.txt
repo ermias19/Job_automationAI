@@ -8,3 +8,4 @@ gspread>=6.1.0
 google-auth>=2.35.0
 PyPDF2>=3.0.1
 APScheduler>=3.10.4
+beautifulsoup4>=4.12.3

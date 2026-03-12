@@ -278,21 +278,28 @@ class OpenAIOrHeuristicEngine:
         )
 
     def _heuristic_tailor(self, match: MatchResult) -> TailoredArtifacts:
-        bullet_block = "\n".join(
-            f"- {item}"
-            for item in (
-                match.assessment.resume_focus
-                or ["Align experience to the job requirements."]
+        focus_items = match.assessment.resume_focus or [
+            "Align experience to the job requirements."
+        ]
+        bullet_block = "\n".join(f"- {item}" for item in focus_items)
+        base_resume_text = self._best_resume_source_text()
+        target_header = (
+            f"Tailored for: {match.job.job_title} at {match.job.company_name}\n"
+            f"Location: {match.job.job_location or 'Not specified'}\n"
+        )
+
+        if base_resume_text:
+            resume_markdown = (
+                f"{base_resume_text}\n\n"
+                f"{target_header}\n"
+                f"Application focus:\n{bullet_block}\n"
             )
-        )
-        resume_markdown = (
-            f"Ermias Mulugeta Teklehaimanot\n"
-            f"Target role: {match.job.job_title} at {match.job.company_name}\n\n"
-            f"Professional summary:\n"
-            f"Software Engineer with 4+ years of experience across backend, full-stack, DevOps, and QA-oriented roles. "
-            f"Strong in Python, Django, FastAPI, React, Docker, Kubernetes, CI/CD, and scalable systems.\n\n"
-            f"Focus areas for this application:\n{bullet_block}\n"
-        )
+        else:
+            resume_markdown = (
+                f"Ermias Mulugeta Teklehaimanot\n"
+                f"{target_header}\n"
+                f"Application focus:\n{bullet_block}\n"
+            )
         cover_letter_markdown = (
             f"Dear Hiring Team,\n\n"
             f"I am applying for the {match.job.job_title} role at {match.job.company_name}. "
@@ -308,9 +315,41 @@ class OpenAIOrHeuristicEngine:
             resume_markdown=resume_markdown,
             cover_letter_markdown=cover_letter_markdown,
             email_intro=email_intro,
-            resume_summary="Heuristic tailored resume draft generated from title alignment.",
+            resume_summary="Heuristic tailored resume built from your source CV/profile with role-specific focus.",
             resume_doc_title=self._resume_doc_title(match),
         )
+
+    def _best_resume_source_text(self) -> str:
+        profile_text, resume_text = self._extract_background_sections()
+        source = resume_text or profile_text
+        if not source:
+            return ""
+        # Keep fallback outputs compact enough for plain-text files.
+        return source.strip()[:12000]
+
+    def _extract_background_sections(self) -> tuple[str, str]:
+        text = (self.candidate_background or "").strip()
+        if not text:
+            return "", ""
+
+        profile_text = ""
+        resume_text = ""
+
+        resume_marker = "Resume text:\n"
+        profile_marker = "Candidate profile:\n"
+
+        if resume_marker in text:
+            before_resume, resume_part = text.split(resume_marker, 1)
+            resume_text = resume_part.strip()
+        else:
+            before_resume = text
+
+        if profile_marker in before_resume:
+            profile_text = before_resume.split(profile_marker, 1)[1].strip()
+        elif profile_marker in text and not profile_text:
+            profile_text = text.split(profile_marker, 1)[1].strip()
+
+        return profile_text, resume_text
 
     @staticmethod
     def _resume_doc_title(match: MatchResult) -> str:

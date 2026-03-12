@@ -107,3 +107,24 @@ class MatchResult:
     job: JobListing
     assessment: FitAssessment
     artifacts: TailoredArtifacts | None = None
+
+
+@dataclass
+class UniversityLead:
+    university_name: str
+    country: str
+    source_url: str
+    rank_hint: str = ""
+
+
+@dataclass
+class ProfessorLead:
+    university_name: str
+    country: str
+    professor_name: str
+    lab_name: str
+    research_topics: list[str]
+    source_url: str
+    professor_email: str = ""
+    rank_hint: str = ""
+    metadata: dict = field(default_factory=dict)

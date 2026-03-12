@@ -16,9 +16,16 @@ This project is the local alternative to the earlier n8n + Bright Data flow. It 
 ## Project layout
 
 - `main.py`: run the scraper only or the full automation pipeline
+- `main.py phd-run`: run PhD automation (PhDPortal universities -> professor leads -> AI matching -> tailored artifacts -> sheet export)
 - `scheduler.py`: daily scheduled run
 - `job_scraper_server.py`: exposes `/health` and `/scrape` for n8n Cloud if you still want that path
 - `job_automation/`: core package
+- `job_automation/reports/job_automation.py`: job-automation report module (rows + headers)
+- `job_automation/reports/phd_roles.py`: PhD-role research report module (rows + headers)
+- `job_automation/university_scraper.py`: PhDPortal university scraper
+- `job_automation/professor_finder.py`: professor lead discovery from university names
+- `job_automation/phd_pipeline.py`: end-to-end PhD workflow
+- `job_automation/phd_email_automation.py`: optional outreach email sender
 - `profiles/candidate_profile.md`: edit this to improve AI matching quality
 - `apps_script/Code.gs`: optional Apps Script sink for Google Sheets
 
@@ -60,6 +67,19 @@ cp .env.example .env
   - set `GOOGLE_APPS_SCRIPT_WEBAPP_URL`
   - set `GOOGLE_SHEETS_SPREADSHEET_ID`
 
+Optional sheet names:
+
+- `GOOGLE_SHEETS_WORKSHEET` (default: `Jobs`)
+- `GOOGLE_SHEETS_PHD_REPORT_WORKSHEET` (default: `phd-research-report`)
+
+PhD pipeline settings:
+
+- `PHD_PORTAL_UNIVERSITIES_URL` (default: `https://www.phdportal.com/search/universities/phd/rankings/computer-science-it`)
+- `PHD_MAX_UNIVERSITIES`
+- `PHD_PROFESSORS_PER_UNIVERSITY`
+- `PHD_SUBJECT_KEYWORDS`
+- `PHD_SEND_EMAILS` (set `true` to send outreach emails to leads that include an email address)
+
 Note: the Apps Script ID you pasted earlier is not a spreadsheet ID. The spreadsheet ID is the value between `/d/` and `/edit` in the Google Sheets URL.
 
 ## Usage
@@ -94,6 +114,18 @@ Or use the heuristic path only:
 python3 main.py recommend --input outputs/<run_id>/raw_jobs.json --no-ai
 ```
 
+Run the PhD pipeline (uses `PHD_PORTAL_UNIVERSITIES_URL`):
+
+```bash
+python3 main.py phd-run
+```
+
+Heuristic-only PhD run:
+
+```bash
+python3 main.py phd-run --no-ai
+```
+
 For LinkedIn, start with a very small test matrix in `.env` because LinkedIn rate-limits aggressively:
 
 ```env
@@ -124,6 +156,7 @@ Each run creates a folder under `outputs/<run_id>/` with:
 
 - `raw_jobs.json`
 - `matched_jobs.csv`
+- `phd_research_report.csv`
 - `run_summary.json`
 - `applications/<company-role>/resume.txt`
 - `applications/<company-role>/cover_letter.txt`

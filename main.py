@@ -44,6 +44,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip OpenAI scoring and use the heuristic fallback only.",
     )
 
+    phd_parser = subparsers.add_parser(
+        "phd-run",
+        help=(
+            "Run PhD automation pipeline: university scraper -> professor finder -> "
+            "AI relevance -> resume/email generation -> sheet export."
+        ),
+    )
+    phd_parser.add_argument(
+        "--no-ai",
+        action="store_true",
+        help="Skip OpenAI scoring and use the heuristic fallback only.",
+    )
+
     return parser
 
 
@@ -77,6 +90,16 @@ def run_recommend(input_path: str, no_ai: bool = False) -> dict[str, Any]:
     return pipeline.run_from_file(Path(input_path))
 
 
+def run_phd_pipeline(no_ai: bool = False) -> dict[str, Any]:
+    from job_automation.phd_pipeline import PhdAutomationPipeline
+
+    settings = load_settings()
+    if no_ai:
+        settings.openai_api_key = None
+    pipeline = PhdAutomationPipeline(settings)
+    return pipeline.run()
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -100,6 +123,11 @@ def main() -> None:
             input_path=getattr(args, "input"),
             no_ai=getattr(args, "no_ai", False),
         )
+        print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
+        return
+
+    if command == "phd-run":
+        result = run_phd_pipeline(no_ai=getattr(args, "no_ai", False))
         print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
         return
 

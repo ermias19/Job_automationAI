@@ -1,6 +1,7 @@
 const DEFAULT_HEADERS = [
   "Job Title",
   "Company",
+  "Application Status",
   "Location",
   "Employment Type",
   "Seniority",
@@ -42,6 +43,7 @@ function doPost(e) {
   const worksheetName = payload.worksheet || "Jobs";
   const headers = payload.headers || DEFAULT_HEADERS;
   const rows = payload.rows || [];
+  const clearExisting = payload.clearExisting === true;
 
   if (!spreadsheetId) {
     return ContentService.createTextOutput(
@@ -51,11 +53,15 @@ function doPost(e) {
 
   const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
   const sheet = getOrCreateSheet_(spreadsheet, worksheetName);
+  if (clearExisting) {
+    sheet.clearContents();
+  }
   ensureHeaders_(sheet, headers);
 
   if (rows.length > 0) {
     const values = rows.map((row) => headers.map((header) => row[header] || ""));
-    sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+    const startRow = Math.max(sheet.getLastRow() + 1, 2);
+    sheet.getRange(startRow, 1, values.length, headers.length).setValues(values);
   }
 
   return ContentService.createTextOutput(

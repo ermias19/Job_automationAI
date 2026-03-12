@@ -95,6 +95,7 @@ class AutomationPipeline:
             "evaluated_jobs": len(jobs_for_ai),
             "matches": len(matches),
             "csv_path": export_info["csv_path"],
+            "phd_report_csv_path": export_info.get("phd_report_csv_path", ""),
             "remote_export": export_info["remote_status"],
             "email_sent": email_sent,
             "summary": summary,
