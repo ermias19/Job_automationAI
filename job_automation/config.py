@@ -102,6 +102,9 @@ class Settings:
     phd_university_seed_file: Path | None = PROJECT_ROOT / "profiles" / "phd_universities_seed.csv"
     phd_max_universities: int = 30
     phd_professors_per_university: int = 3
+    phd_resolve_application_links: bool = True
+    phd_application_link_max_seed_pages: int = 6
+    phd_application_link_max_candidates: int = 40
     phd_subject_keywords: list[str] = field(
         default_factory=lambda: [
             "computer science",
@@ -254,6 +257,16 @@ def load_settings() -> Settings:
         phd_max_universities=int(os.getenv("PHD_MAX_UNIVERSITIES", "30")),
         phd_professors_per_university=int(
             os.getenv("PHD_PROFESSORS_PER_UNIVERSITY", "3")
+        ),
+        phd_resolve_application_links=_as_bool(
+            os.getenv("PHD_RESOLVE_APPLICATION_LINKS"),
+            default=True,
+        ),
+        phd_application_link_max_seed_pages=int(
+            os.getenv("PHD_APPLICATION_LINK_MAX_SEED_PAGES", "6")
+        ),
+        phd_application_link_max_candidates=int(
+            os.getenv("PHD_APPLICATION_LINK_MAX_CANDIDATES", "40")
         ),
         phd_subject_keywords=_csv(
             os.getenv("PHD_SUBJECT_KEYWORDS"),
