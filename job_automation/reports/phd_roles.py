@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from job_automation.models import MatchResult
+from job_automation.reports.links import local_path_hyperlink
 
 
 PHD_ROLE_HEADERS = [
     "University",
     "Professor",
+    "Professor Email",
     "Lab / Group",
     "PhD / Research Role",
     "Research Area",
@@ -15,6 +17,7 @@ PHD_ROLE_HEADERS = [
     "Generated Resume",
     "Email Draft",
     "Resume Path",
+    "Resume Link Status",
     "Cover Letter Path",
     "Email Intro Path",
     "Apply Link",
@@ -48,9 +51,36 @@ def _build_phd_role_row(run_id: str, searched_at: str, match: MatchResult) -> di
         else match.assessment.candidate_highlights
     )
 
-    email_draft = (
+    email_intro_path = (
         str(match.artifacts.email_intro_path)
         if match.artifacts and match.artifacts.email_intro_path
+        else ""
+    )
+    email_draft_path = (
+        match.artifacts.email_intro_drive_url
+        if match.artifacts and match.artifacts.email_intro_drive_url
+        else email_intro_path
+    )
+    resume_path = (
+        match.artifacts.resume_drive_url
+        if match.artifacts and match.artifacts.resume_drive_url
+        else (
+            str(match.artifacts.resume_path)
+            if match.artifacts and match.artifacts.resume_path
+            else ""
+        )
+    )
+    resume_link_status = "drive_link" if (match.artifacts and match.artifacts.resume_drive_url) else (
+        "local_only" if resume_path else "missing"
+    )
+    resume_path_value = resume_path
+    if resume_path and not resume_path.startswith(("http://", "https://")):
+        # Local filesystem links are not openable from Google Sheets web UI.
+        # Keep plain path text so users can copy it directly.
+        resume_path_value = resume_path
+    cover_letter_path = (
+        str(match.artifacts.cover_letter_path)
+        if match.artifacts and match.artifacts.cover_letter_path
         else ""
     )
 
@@ -63,6 +93,7 @@ def _build_phd_role_row(run_id: str, searched_at: str, match: MatchResult) -> di
     return {
         "University": match.job.company_name,
         "Professor": str(raw.get("professor_name", "")).strip(),
+        "Professor Email": str(raw.get("professor_email", "")).strip(),
         "Lab / Group": str(raw.get("lab_name", "")).strip() or match.job.company_name,
         "PhD / Research Role": match.job.job_title,
         "Research Area": ", ".join(topic_list)
@@ -72,10 +103,17 @@ def _build_phd_role_row(run_id: str, searched_at: str, match: MatchResult) -> di
         "Relevant Skills": " | ".join(relevant_skills),
         "Missing Skills": " | ".join(match.assessment.missing_skills),
         "Generated Resume": resume_doc,
-        "Email Draft": email_draft,
-        "Resume Path": str(match.artifacts.resume_path) if match.artifacts and match.artifacts.resume_path else "",
-        "Cover Letter Path": str(match.artifacts.cover_letter_path) if match.artifacts and match.artifacts.cover_letter_path else "",
-        "Email Intro Path": email_draft,
+        "Email Draft": local_path_hyperlink(email_draft_path, "Open Email Draft")
+        if email_draft_path.startswith(("http://", "https://"))
+        else email_draft_path,
+        "Resume Path": local_path_hyperlink(resume_path_value, "Open Resume")
+        if resume_link_status == "drive_link"
+        else resume_path_value,
+        "Resume Link Status": resume_link_status,
+        "Cover Letter Path": local_path_hyperlink(cover_letter_path, "Open Cover Letter"),
+        "Email Intro Path": local_path_hyperlink(email_draft_path, "Open Email Intro")
+        if email_draft_path.startswith(("http://", "https://"))
+        else email_intro_path,
         "Apply Link": str(raw.get("opportunity_url", "")).strip() or match.job.apply_link,
         "Source Site": match.job.source_site,
         "Search Country": match.job.search_country,

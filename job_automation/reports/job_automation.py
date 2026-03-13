@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from job_automation.models import MatchResult
+from job_automation.reports.links import local_path_hyperlink
 
 
 JOB_AUTOMATION_HEADERS = [
@@ -52,6 +53,19 @@ def _build_job_automation_row(run_id: str, searched_at: str, match: MatchResult)
         if match.artifacts and match.artifacts.resume_doc_title
         else f"Resume - {match.job.job_title} @ {match.job.company_name}"
     )
+    resume_path = (
+        str(match.artifacts.resume_path) if match.artifacts and match.artifacts.resume_path else ""
+    )
+    cover_letter_path = (
+        str(match.artifacts.cover_letter_path)
+        if match.artifacts and match.artifacts.cover_letter_path
+        else ""
+    )
+    email_intro_path = (
+        str(match.artifacts.email_intro_path)
+        if match.artifacts and match.artifacts.email_intro_path
+        else ""
+    )
     return {
         "Job Title": match.job.job_title,
         "Company": match.job.company_name,
@@ -75,9 +89,9 @@ def _build_job_automation_row(run_id: str, searched_at: str, match: MatchResult)
         "Candidate Highlights": " | ".join(match.assessment.candidate_highlights),
         "Resume Focus": " | ".join(match.assessment.resume_focus),
         "Resume Summary": match.artifacts.resume_summary if match.artifacts else "",
-        "Resume Path": str(match.artifacts.resume_path) if match.artifacts and match.artifacts.resume_path else "",
-        "Cover Letter Path": str(match.artifacts.cover_letter_path) if match.artifacts and match.artifacts.cover_letter_path else "",
-        "Email Intro Path": str(match.artifacts.email_intro_path) if match.artifacts and match.artifacts.email_intro_path else "",
+        "Resume Path": local_path_hyperlink(resume_path, "Open Resume"),
+        "Cover Letter Path": local_path_hyperlink(cover_letter_path, "Open Cover Letter"),
+        "Email Intro Path": local_path_hyperlink(email_intro_path, "Open Email Intro"),
         "Source Site": match.job.source_site,
         "Search Title": match.job.search_title,
         "Search Country": match.job.search_country,

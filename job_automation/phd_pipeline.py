@@ -8,6 +8,7 @@ from pathlib import Path
 
 from job_automation.ai import OpenAIOrHeuristicEngine
 from job_automation.config import Settings
+from job_automation.drive_uploader import DriveResumePublisher
 from job_automation.models import JobListing, MatchResult, ProfessorLead
 from job_automation.phd_email_automation import PhdEmailAutomation
 from job_automation.professor_finder import ProfessorFinder
@@ -68,6 +69,20 @@ class PhdAutomationPipeline:
             if match.artifacts:
                 self._persist_artifacts(output_dir, match)
 
+        drive_publish_result = DriveResumePublisher(self.settings).publish_phd_resumes(
+            run_id=run_id,
+            matches=matches,
+        )
+        logger.info(
+            "Drive publish: enabled=%s resume_uploaded=%s resume_failed=%s email_uploaded=%s email_failed=%s folder=%s",
+            drive_publish_result.get("enabled"),
+            drive_publish_result.get("uploaded"),
+            drive_publish_result.get("failed"),
+            drive_publish_result.get("email_uploaded"),
+            drive_publish_result.get("email_failed"),
+            drive_publish_result.get("folder_url", ""),
+        )
+
         searched_at = started_at.isoformat()
         export_info = SheetExporter(self.settings).export_phd_only(
             run_id=run_id,
@@ -100,7 +115,14 @@ class PhdAutomationPipeline:
             "evaluated_leads": len(opportunities),
             "matches": len(matches),
             "phd_report_csv_path": export_info.get("phd_report_csv_path", ""),
+            "phd_report_xlsx_path": export_info.get("phd_report_xlsx_path", ""),
             "remote_export": export_info["remote_status"],
+            "drive_resume_upload_enabled": drive_publish_result.get("enabled", False),
+            "drive_resumes_uploaded": drive_publish_result.get("uploaded", 0),
+            "drive_resumes_failed": drive_publish_result.get("failed", 0),
+            "drive_email_drafts_uploaded": drive_publish_result.get("email_uploaded", 0),
+            "drive_email_drafts_failed": drive_publish_result.get("email_failed", 0),
+            "drive_folder_url": drive_publish_result.get("folder_url", ""),
             "emails_sent": email_result.get("sent", 0),
             "emails_skipped": email_result.get("skipped", 0),
             "summary": summary,

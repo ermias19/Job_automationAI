@@ -100,6 +100,8 @@ class TailoredArtifacts:
     resume_path: Path | None = None
     cover_letter_path: Path | None = None
     email_intro_path: Path | None = None
+    resume_drive_url: str = ""
+    email_intro_drive_url: str = ""
 
 
 @dataclass

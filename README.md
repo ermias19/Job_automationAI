@@ -16,13 +16,13 @@ This project is the local alternative to the earlier n8n + Bright Data flow. It 
 ## Project layout
 
 - `main.py`: run the scraper only or the full automation pipeline
-- `main.py phd-run`: run PhD automation (PhDPortal universities -> professor leads -> AI matching -> tailored artifacts -> sheet export)
+- `main.py phd-run`: run PhD automation (multi-source university discovery -> professor leads -> AI matching -> tailored artifacts -> sheet export)
 - `scheduler.py`: daily scheduled run
 - `job_scraper_server.py`: exposes `/health` and `/scrape` for n8n Cloud if you still want that path
 - `job_automation/`: core package
 - `job_automation/reports/job_automation.py`: job-automation report module (rows + headers)
 - `job_automation/reports/phd_roles.py`: PhD-role research report module (rows + headers)
-- `job_automation/university_scraper.py`: PhDPortal university scraper
+- `job_automation/university_scraper.py`: multi-source university collector (seed file, PhDPortal, fallback)
 - `job_automation/professor_finder.py`: professor lead discovery from university names
 - `job_automation/phd_pipeline.py`: end-to-end PhD workflow
 - `job_automation/phd_email_automation.py`: optional outreach email sender
@@ -57,6 +57,7 @@ cp .env.example .env
 - Service account:
   - create a Google Cloud service account
   - enable Google Sheets API
+  - enable Google Drive API (required for resume upload links)
   - download the JSON key
   - set `GOOGLE_SERVICE_ACCOUNT_JSON`
   - share the target spreadsheet with the service-account email
@@ -71,14 +72,24 @@ Optional sheet names:
 
 - `GOOGLE_SHEETS_WORKSHEET` (default: `Jobs`)
 - `GOOGLE_SHEETS_PHD_REPORT_WORKSHEET` (default: `phd-research-report`)
+- `GOOGLE_DRIVE_UPLOAD_ENABLED` (default: `true`, uploads PhD `resume.txt` files to Drive and writes Drive links into `Resume Path`)
+- `GOOGLE_DRIVE_ROOT_FOLDER_ID` (optional existing Drive folder ID; if empty, pipeline creates/uses `GOOGLE_DRIVE_ROOT_FOLDER_NAME`)
+- `GOOGLE_DRIVE_ROOT_FOLDER_NAME` (default: `JobAutomationAI-PhD-Applications`)
+- `GOOGLE_DRIVE_PUBLIC_LINKS` (default: `true`, tries to set `anyone with link` read access)
+- `GOOGLE_DRIVE_OAUTH_CLIENT_SECRET_JSON` (optional; if set, Drive uploader can fall back to user OAuth when service-account uploads fail with storage quota limits)
+- `GOOGLE_DRIVE_OAUTH_TOKEN_JSON` (optional token cache path, default `credentials/google-drive-oauth-token.json`)
 
 PhD pipeline settings:
 
 - `PHD_PORTAL_UNIVERSITIES_URL` (default: `https://www.phdportal.com/search/universities/phd/rankings/computer-science-it`)
+- `PHD_UNIVERSITY_SOURCE_ORDER` (default: `seed_file,phdportal,fallback`)
+- `PHD_UNIVERSITY_SEED_FILE` (default: `profiles/phd_universities_seed.csv`)
 - `PHD_MAX_UNIVERSITIES`
 - `PHD_PROFESSORS_PER_UNIVERSITY`
 - `PHD_SUBJECT_KEYWORDS`
 - `PHD_SEND_EMAILS` (set `true` to send outreach emails to leads that include an email address)
+
+By default, the pipeline uses a local university seed file first to avoid PhDPortal anti-bot blocks, then optionally tries PhDPortal, then falls back to a built-in list.
 
 Note: the Apps Script ID you pasted earlier is not a spreadsheet ID. The spreadsheet ID is the value between `/d/` and `/edit` in the Google Sheets URL.
 
@@ -114,7 +125,7 @@ Or use the heuristic path only:
 python3 main.py recommend --input outputs/<run_id>/raw_jobs.json --no-ai
 ```
 
-Run the PhD pipeline (uses `PHD_PORTAL_UNIVERSITIES_URL`):
+Run the PhD pipeline:
 
 ```bash
 python3 main.py phd-run

@@ -76,6 +76,12 @@ class Settings:
     google_sheets_phd_report_worksheet: str = "phd-research-report"
     google_service_account_json: Path | None = None
     google_apps_script_webapp_url: str | None = None
+    google_drive_upload_enabled: bool = True
+    google_drive_root_folder_id: str | None = None
+    google_drive_root_folder_name: str = "JobAutomationAI-PhD-Applications"
+    google_drive_public_links: bool = True
+    google_drive_oauth_client_secret_json: Path | None = None
+    google_drive_oauth_token_json: Path = PROJECT_ROOT / "credentials" / "google-drive-oauth-token.json"
 
     email_to: str | None = None
     smtp_host: str | None = None
@@ -90,6 +96,10 @@ class Settings:
     phd_portal_universities_url: str = (
         "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it"
     )
+    phd_university_source_order: list[str] = field(
+        default_factory=lambda: ["seed_file", "phdportal", "fallback"]
+    )
+    phd_university_seed_file: Path | None = PROJECT_ROOT / "profiles" / "phd_universities_seed.csv"
     phd_max_universities: int = 30
     phd_professors_per_university: int = 3
     phd_subject_keywords: list[str] = field(
@@ -206,6 +216,21 @@ def load_settings() -> Settings:
         ),
         google_service_account_json=_path(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
         google_apps_script_webapp_url=os.getenv("GOOGLE_APPS_SCRIPT_WEBAPP_URL") or None,
+        google_drive_upload_enabled=_as_bool(os.getenv("GOOGLE_DRIVE_UPLOAD_ENABLED"), default=True),
+        google_drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID") or None,
+        google_drive_root_folder_name=os.getenv(
+            "GOOGLE_DRIVE_ROOT_FOLDER_NAME",
+            "JobAutomationAI-PhD-Applications",
+        ),
+        google_drive_public_links=_as_bool(os.getenv("GOOGLE_DRIVE_PUBLIC_LINKS"), default=True),
+        google_drive_oauth_client_secret_json=_path(
+            os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_SECRET_JSON")
+        ),
+        google_drive_oauth_token_json=_path(
+            os.getenv("GOOGLE_DRIVE_OAUTH_TOKEN_JSON"),
+            PROJECT_ROOT / "credentials" / "google-drive-oauth-token.json",
+        )
+        or PROJECT_ROOT / "credentials" / "google-drive-oauth-token.json",
         email_to=os.getenv("EMAIL_TO") or None,
         smtp_host=os.getenv("SMTP_HOST") or None,
         smtp_port=int(os.getenv("SMTP_PORT", "587")),
@@ -217,6 +242,14 @@ def load_settings() -> Settings:
         phd_portal_universities_url=os.getenv(
             "PHD_PORTAL_UNIVERSITIES_URL",
             "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it",
+        ),
+        phd_university_source_order=_csv(
+            os.getenv("PHD_UNIVERSITY_SOURCE_ORDER"),
+            ["seed_file", "phdportal", "fallback"],
+        ),
+        phd_university_seed_file=_path(
+            os.getenv("PHD_UNIVERSITY_SEED_FILE"),
+            PROJECT_ROOT / "profiles" / "phd_universities_seed.csv",
         ),
         phd_max_universities=int(os.getenv("PHD_MAX_UNIVERSITIES", "30")),
         phd_professors_per_university=int(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import logging
 from pathlib import Path
+from typing import Any
 
 from job_automation.config import Settings
 from job_automation.defaults import DEFAULT_PHD_REPORT_HEADERS, DEFAULT_SHEET_HEADERS
@@ -37,6 +38,13 @@ class SheetExporter:
         )
         csv_path = output_dir / "matched_jobs.csv"
         self._write_local_csv(csv_path, job_rows, DEFAULT_SHEET_HEADERS)
+        xlsx_path = output_dir / "matched_jobs.xlsx"
+        xlsx_written = self._write_local_xlsx(
+            xlsx_path,
+            job_rows,
+            DEFAULT_SHEET_HEADERS,
+            worksheet_title="job-automation",
+        )
 
         remote_status = "skipped"
         if job_rows:
@@ -44,7 +52,9 @@ class SheetExporter:
 
         return {
             "csv_path": str(csv_path),
+            "xlsx_path": str(xlsx_path) if xlsx_written else "",
             "phd_report_csv_path": "",
+            "phd_report_xlsx_path": "",
             "remote_status": remote_status,
         }
 
@@ -62,13 +72,22 @@ class SheetExporter:
         )
         phd_report_csv_path = output_dir / "phd_research_report.csv"
         self._write_local_csv(phd_report_csv_path, phd_rows, DEFAULT_PHD_REPORT_HEADERS)
+        phd_report_xlsx_path = output_dir / "phd_research_report.xlsx"
+        xlsx_written = self._write_local_xlsx(
+            phd_report_xlsx_path,
+            phd_rows,
+            DEFAULT_PHD_REPORT_HEADERS,
+            worksheet_title="phd-research-report",
+        )
 
         # Safeguard: PhD report writes are full refreshes so stale rows never accumulate.
         remote_status = self._export_phd_only_remote(phd_rows)
 
         return {
             "csv_path": "",
+            "xlsx_path": "",
             "phd_report_csv_path": str(phd_report_csv_path),
+            "phd_report_xlsx_path": str(phd_report_xlsx_path) if xlsx_written else "",
             "remote_status": remote_status,
         }
 
@@ -146,6 +165,39 @@ class SheetExporter:
             writer.writeheader()
             for row in rows:
                 writer.writerow(row)
+
+    @staticmethod
+    def _write_local_xlsx(
+        path: Path,
+        rows: list[dict],
+        headers: list[str],
+        worksheet_title: str,
+    ) -> bool:
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill
+        except ImportError:
+            logger.warning("openpyxl is not installed; skipping XLSX export for %s", path.name)
+            return False
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = worksheet_title[:31] if worksheet_title else "report"
+
+        for col_index, header in enumerate(headers, start=1):
+            cell = sheet.cell(row=1, column=col_index, value=header)
+            cell.fill = PatternFill(fill_type="solid", fgColor="339966")
+            cell.font = Font(color="FFFFFF", bold=True)
+
+        for row_index, row in enumerate(rows, start=2):
+            for col_index, header in enumerate(headers, start=1):
+                value: Any = row.get(header, "")
+                sheet.cell(row=row_index, column=col_index, value=value)
+
+        workbook.save(path)
+        return True
 
 
 class BaseWorksheetExporter:
