@@ -16,14 +16,15 @@ This project is the local alternative to the earlier n8n + Bright Data flow. It 
 ## Project layout
 
 - `main.py`: run the scraper only or the full automation pipeline
-- `main.py phd-run`: run PhD automation (multi-source university discovery -> professor leads -> AI matching -> tailored artifacts -> sheet export)
+- `main.py phd-run`: run PhD automation (multi-source university discovery -> professor leads -> application-link discovery -> AI matching -> tailored artifacts -> sheet export)
 - `scheduler.py`: daily scheduled run
 - `job_scraper_server.py`: exposes `/health` and `/scrape` for n8n Cloud if you still want that path
 - `job_automation/`: core package
 - `job_automation/reports/job_automation.py`: job-automation report module (rows + headers)
 - `job_automation/reports/phd_roles.py`: PhD-role research report module (rows + headers)
-- `job_automation/university_scraper.py`: multi-source university collector (seed file, PhDPortal, fallback)
+- `job_automation/university_scraper.py`: multi-source university collector (EURAXESS, FindAPhD, ScholarshipDB, fallback; optional seed-file support)
 - `job_automation/professor_finder.py`: professor lead discovery from university names
+- `job_automation/application_link_finder.py`: real application/admissions URL finder (web crawl + optional OpenAI ranking)
 - `job_automation/phd_pipeline.py`: end-to-end PhD workflow
 - `job_automation/phd_email_automation.py`: optional outreach email sender
 - `profiles/candidate_profile.md`: edit this to improve AI matching quality
@@ -37,6 +38,12 @@ This project is the local alternative to the earlier n8n + Bright Data flow. It 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+Install a local LaTeX compiler (used to produce `resume.pdf` from generated `resume.txt`):
+
+```bash
+brew install --cask mactex-no-gui
 ```
 
 2. Copy the environment file and fill in your values.
@@ -71,8 +78,10 @@ cp .env.example .env
 Optional sheet names:
 
 - `GOOGLE_SHEETS_WORKSHEET` (default: `Jobs`)
+- `GOOGLE_SHEETS_REMOTE_JOBS_WORKSHEET` (default: `remote-jobs`)
 - `GOOGLE_SHEETS_PHD_REPORT_WORKSHEET` (default: `phd-research-report`)
-- `GOOGLE_DRIVE_UPLOAD_ENABLED` (default: `true`, uploads PhD `resume.txt` files to Drive and writes Drive links into `Resume Path`)
+- `GOOGLE_DRIVE_UPLOAD_ENABLED` (default: `true`, uploads the generated resume artifact (`resume.pdf` when available, otherwise `resume.txt`) and writes Drive links into `Resume Path`)
+- `GOOGLE_DRIVE_UPLOAD_MAX_WORKERS` (default: `4`, uploads resume/email artifacts in parallel)
 - `GOOGLE_DRIVE_ROOT_FOLDER_ID` (optional existing Drive folder ID; if empty, pipeline creates/uses `GOOGLE_DRIVE_ROOT_FOLDER_NAME`)
 - `GOOGLE_DRIVE_ROOT_FOLDER_NAME` (default: `JobAutomationAI-PhD-Applications`)
 - `GOOGLE_DRIVE_PUBLIC_LINKS` (default: `true`, tries to set `anyone with link` read access)
@@ -81,15 +90,25 @@ Optional sheet names:
 
 PhD pipeline settings:
 
-- `PHD_PORTAL_UNIVERSITIES_URL` (default: `https://www.phdportal.com/search/universities/phd/rankings/computer-science-it`)
-- `PHD_UNIVERSITY_SOURCE_ORDER` (default: `seed_file,phdportal,fallback`)
+- `PHD_UNIVERSITY_SOURCE_ORDER` (default: `euraxess,findaphd,scholarshipdb,fallback`)
 - `PHD_UNIVERSITY_SEED_FILE` (default: `profiles/phd_universities_seed.csv`)
+- `PHD_FINDAPHD_URL` (default: `https://www.findaphd.com/phds/computer-science/`)
+- `PHD_SCHOLARSHIPDB_URL` (default: `https://scholarshipdb.net/PhD-scholarships/Computer-Science`)
+- `PHD_EURAXESS_API_URL` (default: `https://euraxess.ec.europa.eu/jobs/search`)
 - `PHD_MAX_UNIVERSITIES`
 - `PHD_PROFESSORS_PER_UNIVERSITY`
+- `PHD_RESOLVE_APPLICATION_LINKS` (default: `true`)
+- `PHD_APPLICATION_LINK_MAX_SEED_PAGES` (default: `6`)
+- `PHD_APPLICATION_LINK_MAX_CANDIDATES` (default: `40`)
+- `PHD_LINK_FINDER_MAX_WORKERS` (default: `8`, parallel workers for application-link resolution)
+- `PHD_LINK_REQUEST_TIMEOUT_SECONDS` (default: `12`, per-request read timeout)
+- `PHD_LINK_EARLY_CUTOFF_SCORE` (default: `20`, stop crawling extra seed pages once a strong application link is found)
+- `PHD_MINIMUM_FIT_SCORE` (default: `50`; only leads with `fit_score > 50` are kept)
+- `PHD_TECH_FIELD_KEYWORDS` (comma-separated; only leads matching these technical areas are kept)
 - `PHD_SUBJECT_KEYWORDS`
 - `PHD_SEND_EMAILS` (set `true` to send outreach emails to leads that include an email address)
 
-By default, the pipeline uses a local university seed file first to avoid PhDPortal anti-bot blocks, then optionally tries PhDPortal, then falls back to a built-in list.
+By default, the pipeline uses EURAXESS / FindAPhD / ScholarshipDB sources, then a built-in fallback list.
 
 Note: the Apps Script ID you pasted earlier is not a spreadsheet ID. The spreadsheet ID is the value between `/d/` and `/edit` in the Google Sheets URL.
 
@@ -167,9 +186,12 @@ Each run creates a folder under `outputs/<run_id>/` with:
 
 - `raw_jobs.json`
 - `matched_jobs.csv`
+- `matched_remote_jobs.csv`
 - `phd_research_report.csv`
 - `run_summary.json`
 - `applications/<company-role>/resume.txt`
+- `applications/<company-role>/resume.tex`
+- `applications/<company-role>/resume.pdf` (if `pdflatex` is installed)
 - `applications/<company-role>/cover_letter.txt`
 - `applications/<company-role>/email_intro.txt`
 
@@ -189,4 +211,4 @@ The scraper keeps the parallel design, but LinkedIn-specific defaults are intent
 - `python-jobspy` can be sensitive to site-side changes. This project defaults to `JOB_SITES=linkedin`.
 - LinkedIn guest scraping is rate-limited. A 144-search run from one IP will often fail if you try to do it too fast. The defaults now bias toward reliability over raw speed.
 - Email delivery requires SMTP credentials. Gmail usually requires an App Password, not your regular account password.
-- The tailored outputs are markdown drafts. They are designed to be reviewed before submission.
+- The tailored outputs are text drafts and generated PDF files. Review before submission.

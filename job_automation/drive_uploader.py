@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
+import mimetypes
 from pathlib import Path
 import shutil
+import threading
 
 from job_automation.config import Settings
 from job_automation.models import MatchResult
@@ -17,7 +20,14 @@ class DriveResumePublisher:
 
     def publish_phd_resumes(self, run_id: str, matches: list[MatchResult]) -> dict:
         if not self.settings.google_drive_upload_enabled:
-            return {"enabled": False, "uploaded": 0, "failed": 0, "folder_url": ""}
+            return {
+                "enabled": False,
+                "uploaded": 0,
+                "failed": 0,
+                "email_uploaded": 0,
+                "email_failed": 0,
+                "folder_url": "",
+            }
         service_account_available = bool(
             self.settings.google_service_account_json
             and self.settings.google_service_account_json.exists()
@@ -32,18 +42,39 @@ class DriveResumePublisher:
             logger.warning(
                 "Drive upload enabled but neither service-account nor OAuth credentials are configured."
             )
-            return {"enabled": True, "uploaded": 0, "failed": 0, "folder_url": ""}
+            return {
+                "enabled": True,
+                "uploaded": 0,
+                "failed": 0,
+                "email_uploaded": 0,
+                "email_failed": 0,
+                "folder_url": "",
+            }
 
         using_oauth = False
         try:
             service = self._build_drive_service()
         except Exception:
             logger.exception("Could not initialize Google Drive API client for resume publishing.")
-            return {"enabled": True, "uploaded": 0, "failed": len(matches), "folder_url": ""}
+            return {
+                "enabled": True,
+                "uploaded": 0,
+                "failed": len(matches),
+                "email_uploaded": 0,
+                "email_failed": len(matches),
+                "folder_url": "",
+            }
 
         if service_account_available and not self._oauth_configured():
             if not self._service_account_target_is_supported(service):
-                return {"enabled": True, "uploaded": 0, "failed": len(matches), "folder_url": ""}
+                return {
+                    "enabled": True,
+                    "uploaded": 0,
+                    "failed": len(matches),
+                    "email_uploaded": 0,
+                    "email_failed": len(matches),
+                    "folder_url": "",
+                }
 
         try:
             root_id = self._ensure_root_folder(service)
@@ -60,17 +91,38 @@ class DriveResumePublisher:
                     run_folder_id = self._create_folder(service, f"phd-{run_id}", parent_id=root_id)
                 except Exception:
                     logger.exception("Could not create Drive folder structure via OAuth for run %s", run_id)
-                    return {"enabled": True, "uploaded": 0, "failed": len(matches), "folder_url": ""}
+                    return {
+                        "enabled": True,
+                        "uploaded": 0,
+                        "failed": len(matches),
+                        "email_uploaded": 0,
+                        "email_failed": len(matches),
+                        "folder_url": "",
+                    }
             elif self._is_storage_quota_error(exc):
                 logger.error(
                     "Drive upload blocked by storageQuotaExceeded. "
                     "Service accounts cannot upload into personal My Drive. "
                     "Configure GOOGLE_DRIVE_OAUTH_CLIENT_SECRET_JSON or use a Shared Drive."
                 )
-                return {"enabled": True, "uploaded": 0, "failed": len(matches), "folder_url": ""}
+                return {
+                    "enabled": True,
+                    "uploaded": 0,
+                    "failed": len(matches),
+                    "email_uploaded": 0,
+                    "email_failed": len(matches),
+                    "folder_url": "",
+                }
             else:
                 logger.exception("Could not create Drive folder structure for run %s", run_id)
-                return {"enabled": True, "uploaded": 0, "failed": len(matches), "folder_url": ""}
+                return {
+                    "enabled": True,
+                    "uploaded": 0,
+                    "failed": len(matches),
+                    "email_uploaded": 0,
+                    "email_failed": len(matches),
+                    "folder_url": "",
+                }
 
         resume_uploaded = 0
         resume_failed = 0
@@ -97,6 +149,31 @@ class DriveResumePublisher:
             resumes_folder_id = self._create_folder(service, "resumes", parent_id=run_folder_id)
             email_drafts_folder_id = self._create_folder(service, "email-drafts", parent_id=run_folder_id)
 
+        can_parallel_upload = (
+            self.settings.google_drive_upload_max_workers > 1
+            and (using_oauth or not self._oauth_configured())
+        )
+        if can_parallel_upload:
+            parallel_result = self._upload_artifacts_parallel(
+                matches=matches,
+                run_folder_id=run_folder_id,
+                resumes_folder_id=resumes_folder_id,
+                email_drafts_folder_id=email_drafts_folder_id,
+                use_oauth=using_oauth,
+            )
+            return {
+                "enabled": True,
+                "uploaded": parallel_result["resume_uploaded"],
+                "failed": parallel_result["resume_failed"],
+                "email_uploaded": parallel_result["email_uploaded"],
+                "email_failed": parallel_result["email_failed"],
+                "folder_url": f"https://drive.google.com/drive/folders/{run_folder_id}",
+            }
+        if self.settings.google_drive_upload_max_workers > 1 and not using_oauth and self._oauth_configured():
+            logger.info(
+                "Drive uploads running sequentially so service-account quota errors can fallback to OAuth."
+            )
+
         for match in matches:
             if quota_blocked:
                 break
@@ -110,11 +187,13 @@ class DriveResumePublisher:
             if artifact.resume_path:
                 resume_local_path = Path(artifact.resume_path)
                 if resume_local_path.exists():
+                    suffix = resume_local_path.suffix if resume_local_path.suffix else ".txt"
+                    resume_file_name = f"{slug}-resume{suffix}"
                     try:
                         file_id = self._upload_file(
                             service=service,
                             local_path=resume_local_path,
-                            file_name=f"{slug}-resume.txt",
+                            file_name=resume_file_name,
                             parent_id=resumes_folder_id,
                         )
                         if self.settings.google_drive_public_links:
@@ -133,7 +212,7 @@ class DriveResumePublisher:
                                 file_id = self._upload_file(
                                     service=service,
                                     local_path=resume_local_path,
-                                    file_name=f"{slug}-resume.txt",
+                                    file_name=resume_file_name,
                                     parent_id=resumes_folder_id,
                                 )
                                 if self.settings.google_drive_public_links:
@@ -224,6 +303,121 @@ class DriveResumePublisher:
             "email_uploaded": email_uploaded,
             "email_failed": email_failed,
             "folder_url": folder_url,
+        }
+
+    def _upload_artifacts_parallel(
+        self,
+        matches: list[MatchResult],
+        run_folder_id: str,
+        resumes_folder_id: str,
+        email_drafts_folder_id: str,
+        use_oauth: bool,
+    ) -> dict[str, int]:
+        thread_local = threading.local()
+        workers = max(1, self.settings.google_drive_upload_max_workers)
+        tasks: list[dict] = []
+
+        for match in matches:
+            artifact = match.artifacts
+            if not artifact:
+                continue
+            slug = match.job.storage_slug()
+
+            if artifact.resume_path:
+                resume_local_path = Path(artifact.resume_path)
+                if resume_local_path.exists():
+                    suffix = resume_local_path.suffix if resume_local_path.suffix else ".txt"
+                    tasks.append(
+                        {
+                            "kind": "resume",
+                            "slug": slug,
+                            "artifact": artifact,
+                            "local_path": resume_local_path,
+                            "file_name": f"{slug}-resume{suffix}",
+                            "parent_id": resumes_folder_id,
+                        }
+                    )
+
+            if artifact.email_intro_path:
+                email_local_path = Path(artifact.email_intro_path)
+                if email_local_path.exists():
+                    tasks.append(
+                        {
+                            "kind": "email",
+                            "slug": slug,
+                            "artifact": artifact,
+                            "local_path": email_local_path,
+                            "file_name": f"{slug}-email-draft.txt",
+                            "parent_id": email_drafts_folder_id,
+                        }
+                    )
+
+        if not tasks:
+            return {
+                "resume_uploaded": 0,
+                "resume_failed": 0,
+                "email_uploaded": 0,
+                "email_failed": 0,
+            }
+
+        def _service_for_thread():
+            service = getattr(thread_local, "service", None)
+            if service is None:
+                service = self._build_drive_service(use_oauth=use_oauth)
+                thread_local.service = service
+            return service
+
+        def _upload_one(task: dict) -> dict:
+            try:
+                service = _service_for_thread()
+                file_id = self._upload_file(
+                    service=service,
+                    local_path=task["local_path"],
+                    file_name=task["file_name"],
+                    parent_id=task["parent_id"],
+                )
+                if self.settings.google_drive_public_links:
+                    self._ensure_public_read(service, file_id)
+                return {"ok": True, "task": task, "file_id": file_id}
+            except Exception as exc:
+                return {"ok": False, "task": task, "exc": exc}
+
+        resume_uploaded = 0
+        resume_failed = 0
+        email_uploaded = 0
+        email_failed = 0
+
+        with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as pool:
+            futures = [pool.submit(_upload_one, task) for task in tasks]
+            for future in as_completed(futures):
+                result = future.result()
+                task = result["task"]
+                kind = task["kind"]
+                artifact = task["artifact"]
+
+                if result["ok"]:
+                    file_id = result["file_id"]
+                    url = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+                    if kind == "resume":
+                        artifact.resume_drive_url = url
+                        resume_uploaded += 1
+                    else:
+                        artifact.email_intro_drive_url = url
+                        email_uploaded += 1
+                    continue
+
+                exc = result.get("exc")
+                logger.error("Failed uploading %s for %s: %s", kind, task["slug"], exc)
+                if kind == "resume":
+                    resume_failed += 1
+                else:
+                    email_failed += 1
+
+        return {
+            "resume_uploaded": resume_uploaded,
+            "resume_failed": resume_failed,
+            "email_uploaded": email_uploaded,
+            "email_failed": email_failed,
         }
 
     def _build_drive_service(self, *, use_oauth: bool = False):
@@ -329,7 +523,12 @@ class DriveResumePublisher:
     def _upload_file(service, local_path: Path, file_name: str, parent_id: str) -> str:
         from googleapiclient.http import MediaFileUpload
 
-        media = MediaFileUpload(str(local_path), mimetype="text/plain", resumable=False)
+        guessed_mime, _ = mimetypes.guess_type(str(local_path))
+        media = MediaFileUpload(
+            str(local_path),
+            mimetype=guessed_mime or "application/octet-stream",
+            resumable=False,
+        )
         metadata = {"name": file_name, "parents": [parent_id]}
         created = (
             service.files()

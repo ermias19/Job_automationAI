@@ -97,6 +97,8 @@ class TailoredArtifacts:
     email_intro: str
     resume_summary: str = ""
     resume_doc_title: str = ""
+    resume_text_path: Path | None = None
+    resume_pdf_path: Path | None = None
     resume_path: Path | None = None
     cover_letter_path: Path | None = None
     email_intro_path: Path | None = None

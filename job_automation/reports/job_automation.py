@@ -33,6 +33,7 @@ JOB_AUTOMATION_HEADERS = [
     "Source Site",
     "Search Title",
     "Search Country",
+    "Phase",
     "Run ID",
     "Searched At",
 ]
@@ -95,6 +96,7 @@ def _build_job_automation_row(run_id: str, searched_at: str, match: MatchResult)
         "Source Site": match.job.source_site,
         "Search Title": match.job.search_title,
         "Search Country": match.job.search_country,
+        "Phase": "",
         "Run ID": run_id,
         "Searched At": searched_at,
     }

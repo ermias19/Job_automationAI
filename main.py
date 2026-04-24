@@ -105,6 +105,10 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s",
     )
+    # Suppress verbose transport logs from OpenAI/httpx while keeping app logs at INFO.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
     parser = build_parser()
     args = parser.parse_args()
     command = args.command or "run"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from html import unescape
+import json
 import logging
 import re
 from urllib.parse import urljoin, urlparse
@@ -44,7 +45,7 @@ class UniversityScraper:
             self.settings.phd_university_source_order
         )
         if not ordered_sources:
-            ordered_sources = ["seed_file", "phdportal", "fallback"]
+            ordered_sources = ["euraxess", "findaphd", "scholarshipdb", "fallback"]
 
         combined: list[UniversityLead] = []
         seen_names: set[str] = set()
@@ -82,7 +83,7 @@ class UniversityScraper:
             "All configured university sources failed. Using built-in CS fallback universities."
         )
         return self._fallback_university_leads(
-            source_url=self.settings.phd_portal_universities_url
+            source_url=self._primary_source_url()
         )
 
     @staticmethod
@@ -93,9 +94,17 @@ class UniversityScraper:
         normalized: list[str] = []
         for source in raw_sources:
             token = source.strip().lower().replace("-", "_")
+            if token in {"phdportal", "phd_portal", "phd-portal"}:
+                token = "findaphd"
             if token in {"seed", "builtin", "built_in"}:
                 token = "fallback"
-            if token not in {"seed_file", "phdportal", "fallback"}:
+            if token not in {
+                "seed_file",
+                "findaphd",
+                "scholarshipdb",
+                "euraxess",
+                "fallback",
+            }:
                 logger.warning("Ignoring unknown PHD university source: %s", source)
                 continue
             if token not in normalized:
@@ -105,30 +114,27 @@ class UniversityScraper:
     def _collect_source(self, source: str) -> list[UniversityLead]:
         if source == "seed_file":
             return self._load_seed_file()
-        if source == "phdportal":
-            return self._load_from_phdportal()
+        if source == "findaphd":
+            return self._load_from_findaphd()
+        if source == "scholarshipdb":
+            return self._load_from_scholarshipdb()
+        if source == "euraxess":
+            return self._load_from_euraxess()
         if source == "fallback":
             return self._fallback_university_leads(
-                source_url=self.settings.phd_portal_universities_url
+                source_url=self._primary_source_url()
             )
         return []
 
-    def _load_from_phdportal(self) -> list[UniversityLead]:
-        url = self.settings.phd_portal_universities_url
-        logger.info("Scraping PhD universities from %s", url)
-        html = self._download(url)
-        if not html:
-            logger.warning("PhD ranking page could not be downloaded from %s", url)
-            return []
-
-        leads = self._extract_university_leads(html=html, source_url=url)
-        if not leads:
-            logger.warning(
-                "Could not parse university leads from %s. The site markup likely changed.",
-                url,
-            )
-            return []
-        return leads
+    def _primary_source_url(self) -> str:
+        for candidate in (
+            self.settings.phd_findaphd_url,
+            self.settings.phd_scholarshipdb_url,
+            self.settings.phd_euraxess_api_url,
+        ):
+            if candidate:
+                return candidate
+        return "https://www.findaphd.com/phds/computer-science/"
 
     def _load_seed_file(self) -> list[UniversityLead]:
         path = self.settings.phd_university_seed_file
@@ -167,7 +173,7 @@ class UniversityScraper:
                         UniversityLead(
                             university_name=name,
                             country=country,
-                            source_url=source_url or self.settings.phd_portal_universities_url,
+                            source_url=source_url or self._primary_source_url(),
                             rank_hint=rank_hint,
                         )
                     )
@@ -176,8 +182,332 @@ class UniversityScraper:
             return []
         return leads
 
+    def _load_from_findaphd(self) -> list[UniversityLead]:
+        url = self.settings.phd_findaphd_url
+        logger.info("Scraping universities from FindAPhD: %s", url)
+        html = self._download(url)
+        if not html:
+            return []
+        leads = self._extract_generic_university_leads(
+            html=html,
+            source_url=url,
+            rank_prefix="findaphd",
+        )
+        if not leads:
+            logger.warning("No university leads parsed from FindAPhD page %s", url)
+        return leads
+
+    def _load_from_scholarshipdb(self) -> list[UniversityLead]:
+        url = self.settings.phd_scholarshipdb_url
+        logger.info("Scraping universities from ScholarshipDB: %s", url)
+        html = self._download(url)
+        if not html:
+            return []
+        leads = self._extract_generic_university_leads(
+            html=html,
+            source_url=url,
+            rank_prefix="scholarshipdb",
+        )
+        if not leads:
+            logger.warning("No university leads parsed from ScholarshipDB page %s", url)
+        return leads
+
+    def _load_from_euraxess(self) -> list[UniversityLead]:
+        url = self.settings.phd_euraxess_api_url
+        logger.info("Collecting universities from EURAXESS source: %s", url)
+
+        payload = self._download_json(url)
+        if payload is not None:
+            api_leads = self._extract_euraxess_university_leads(payload=payload, source_url=url)
+            if api_leads:
+                return api_leads
+            logger.warning("EURAXESS JSON source returned no university leads: %s", url)
+
+        html = self._download(url)
+        if not html:
+            return []
+        html_leads = self._extract_generic_university_leads(
+            html=html,
+            source_url=url,
+            rank_prefix="euraxess",
+        )
+        if not html_leads:
+            logger.warning("No university leads parsed from EURAXESS HTML page %s", url)
+        return html_leads
+
+    def _download_json(self, url: str) -> dict | list | None:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/json,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        try:
+            response = requests.get(url, timeout=30, headers=headers)
+            if response.status_code in {401, 403, 429}:
+                logger.warning(
+                    "Source blocked automated access (HTTP %s) for %s",
+                    response.status_code,
+                    url,
+                )
+                return None
+            response.raise_for_status()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            body = response.text.strip()
+            if "json" not in content_type and not (body.startswith("{") or body.startswith("[")):
+                return None
+            return response.json()
+        except requests.RequestException as exc:
+            logger.warning("Failed to download JSON %s (%s)", url, exc)
+            return None
+        except ValueError:
+            logger.warning("Could not parse JSON response from %s", url)
+            return None
+
+    def _extract_euraxess_university_leads(
+        self,
+        payload: dict | list,
+        source_url: str,
+    ) -> list[UniversityLead]:
+        records = self._extract_records(payload)
+        seen: set[str] = set()
+        leads: list[UniversityLead] = []
+        for index, record in enumerate(records, start=1):
+            name = self._extract_university_name_from_record(record)
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            country = self._extract_country_from_record(record)
+            link = self._extract_link_from_record(record) or source_url
+            leads.append(
+                UniversityLead(
+                    university_name=name,
+                    country=country,
+                    source_url=link,
+                    rank_hint=f"euraxess#{index}",
+                )
+            )
+        return leads
+
+    def _extract_generic_university_leads(
+        self,
+        html: str,
+        source_url: str,
+        rank_prefix: str,
+    ) -> list[UniversityLead]:
+        names_and_urls: list[tuple[str, str]] = []
+        try:
+            from bs4 import BeautifulSoup  # type: ignore
+
+            soup = BeautifulSoup(html, "html.parser")
+            for anchor in soup.find_all("a"):
+                href = str(anchor.get("href", "")).strip()
+                text = anchor.get_text(" ", strip=True)
+                name = self._extract_university_name_from_text(text)
+                if not name:
+                    continue
+                full_url = urljoin(source_url, href) if href else source_url
+                names_and_urls.append((name, full_url))
+
+            for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+                raw = script.string or script.text or ""
+                for name in self._extract_university_names_from_json_text(raw):
+                    names_and_urls.append((name, source_url))
+        except Exception:
+            pass
+
+        if not names_and_urls:
+            for name in self._extract_university_names_from_text_blob(html):
+                names_and_urls.append((name, source_url))
+
+        seen: set[str] = set()
+        leads: list[UniversityLead] = []
+        rank_counter = 1
+        for name, url in names_and_urls:
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            leads.append(
+                UniversityLead(
+                    university_name=name,
+                    country=self._extract_country_from_text(name) or "",
+                    source_url=url or source_url,
+                    rank_hint=f"{rank_prefix}#{rank_counter}",
+                )
+            )
+            rank_counter += 1
+        return leads
+
+    @staticmethod
+    def _extract_records(payload: dict | list) -> list[dict]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if not isinstance(payload, dict):
+            return []
+
+        queue: list[dict | list] = [payload]
+        records: list[dict] = []
+        while queue:
+            current = queue.pop(0)
+            if isinstance(current, list):
+                if current and all(isinstance(item, dict) for item in current):
+                    records.extend(item for item in current if isinstance(item, dict))
+                else:
+                    queue.extend(item for item in current if isinstance(item, (dict, list)))
+            elif isinstance(current, dict):
+                for value in current.values():
+                    if isinstance(value, list):
+                        queue.append(value)
+                    elif isinstance(value, dict):
+                        queue.append(value)
+        return records
+
+    def _extract_university_name_from_record(self, record: dict) -> str:
+        possible_values = [
+            record.get("organizationName"),
+            record.get("organisationName"),
+            record.get("institutionName"),
+            record.get("university"),
+            record.get("employerName"),
+            record.get("organization"),
+            record.get("organisation"),
+            record.get("institution"),
+            record.get("hiringOrganization"),
+            record.get("hostInstitution"),
+        ]
+        for value in possible_values:
+            if isinstance(value, dict):
+                value = value.get("name") or value.get("display_name")
+            if isinstance(value, str):
+                extracted = self._extract_university_name_from_text(value)
+                if extracted:
+                    return extracted
+        return ""
+
+    @staticmethod
+    def _extract_country_from_record(record: dict) -> str:
+        for key in (
+            "countryCode",
+            "country_code",
+            "country",
+            "countryName",
+            "country_name",
+        ):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, dict):
+                for sub in ("code", "name"):
+                    sub_value = value.get(sub)
+                    if isinstance(sub_value, str) and sub_value.strip():
+                        return sub_value.strip()
+        return ""
+
+    @staticmethod
+    def _extract_link_from_record(record: dict) -> str:
+        for key in (
+            "applyUrl",
+            "applicationUrl",
+            "url",
+            "link",
+            "vacancyUrl",
+            "vacancy_url",
+            "detailUrl",
+            "jobUrl",
+            "externalUrl",
+        ):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip().startswith(("http://", "https://")):
+                return value.strip()
+        return ""
+
+    def _extract_university_names_from_json_text(self, raw: str) -> list[str]:
+        names: list[str] = []
+        if not raw.strip():
+            return names
+        try:
+            payload = json.loads(raw)
+            for record in self._extract_records(payload):
+                name = self._extract_university_name_from_record(record)
+                if name:
+                    names.append(name)
+            return names
+        except Exception:
+            pass
+
+        names.extend(self._extract_university_names_from_text_blob(raw))
+        return names
+
+    def _extract_university_names_from_text_blob(self, text: str) -> list[str]:
+        normalized = unescape(text or "")
+        pattern = re.compile(
+            r"([A-Z][A-Za-z&'’().,\- ]{2,100}"
+            r"(?:University|Institute|College|School|Polytechnic|Universitat|Universität|Universite|Universidad)"
+            r"[A-Za-z&'’().,\- ]{0,80})"
+        )
+        names: list[str] = []
+        for match in pattern.finditer(normalized):
+            candidate = self._extract_university_name_from_text(match.group(1))
+            if candidate:
+                names.append(candidate)
+        return names
+
+    def _extract_university_name_from_text(self, value: str) -> str:
+        text = re.sub(r"\s+", " ", (value or "").strip())
+        if not text or len(text) < 4 or len(text) > 140:
+            return ""
+        lowered = text.lower()
+        noise_tokens = [
+            "phd",
+            "scholarship",
+            "position",
+            "postdoc",
+            "apply",
+            "deadline",
+            "research assistant",
+            "funding",
+        ]
+        if any(token in lowered for token in noise_tokens):
+            if "university" not in lowered and "institute" not in lowered:
+                return ""
+        if " at " in lowered:
+            maybe_name = text.split(" at ")[-1].strip(" -|")
+            if maybe_name:
+                text = maybe_name
+                lowered = text.lower()
+        if " | " in text:
+            text = text.split(" | ")[0].strip()
+            lowered = text.lower()
+
+        keyword_tokens = [
+            "university",
+            "institute",
+            "college",
+            "school",
+            "polytechnic",
+            "universitat",
+            "universität",
+            "universite",
+            "universidad",
+            "academy",
+        ]
+        has_keyword = any(token in lowered for token in keyword_tokens)
+        acronym_like = bool(re.fullmatch(r"[A-Z]{2,8}", text))
+        if not has_keyword and not acronym_like:
+            return ""
+        return text
+
     @staticmethod
     def _download(url: str) -> str:
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        referer = f"{parsed.scheme or 'https'}://{parsed.netloc}/" if parsed.netloc else "https://www.google.com/"
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -186,13 +516,13 @@ class UniversityScraper:
             ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.phdportal.com/",
+            "Referer": referer,
         }
         try:
             response = requests.get(url, timeout=30, headers=headers)
             if response.status_code in {401, 403, 429}:
                 logger.warning(
-                    "PhD portal blocked automated access (HTTP %s) for %s",
+                    "Source blocked automated access (HTTP %s) for %s",
                     response.status_code,
                     url,
                 )
@@ -346,7 +676,7 @@ class UniversityScraper:
         return leads[: self.settings.phd_max_universities]
 
 
-def normalize_phdportal_url(url: str) -> str:
+def normalize_source_url(url: str) -> str:
     parsed = urlparse(url)
     if not parsed.scheme:
         return f"https://{url.lstrip('/')}"

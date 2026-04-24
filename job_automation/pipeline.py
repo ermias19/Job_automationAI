@@ -5,10 +5,12 @@ from datetime import datetime
 import json
 import logging
 from pathlib import Path
+import re
 
 from job_automation.ai import OpenAIOrHeuristicEngine
 from job_automation.config import Settings
 from job_automation.emailer import Emailer
+from job_automation.latex_renderer import LatexResumeRenderer
 from job_automation.models import JobListing, MatchResult
 from job_automation.resume import load_candidate_background
 from job_automation.scraper import JobScraper
@@ -51,9 +53,11 @@ class AutomationPipeline:
         background = load_candidate_background(self.settings)
         logger.info("Loaded candidate background")
 
-        jobs_for_ai = self._rank_jobs(scraped_jobs)[: self.settings.max_jobs_for_ai]
+        weekly_jobs = self._filter_recent_jobs(scraped_jobs)
+        jobs_for_ai = self._rank_jobs(weekly_jobs)[: self.settings.max_jobs_for_ai]
         logger.info("Selected %s jobs for evaluation", len(jobs_for_ai))
         engine = OpenAIOrHeuristicEngine(self.settings, background)
+        latex_renderer = LatexResumeRenderer(self.settings)
         assessments = engine.evaluate_jobs(jobs_for_ai)
         logger.info("Completed fit evaluation for %s jobs", len(assessments))
 
@@ -74,7 +78,7 @@ class AutomationPipeline:
         for match in matches:
             match.artifacts = artifact_index.get(match.job.dedupe_key())
             if match.artifacts:
-                self._persist_artifacts(output_dir, match)
+                self._persist_artifacts(output_dir, match, latex_renderer)
 
         searched_at = started_at.isoformat()
         exporter = SheetExporter(self.settings)
@@ -96,9 +100,13 @@ class AutomationPipeline:
             "matches": len(matches),
             "csv_path": export_info["csv_path"],
             "xlsx_path": export_info.get("xlsx_path", ""),
+            "remote_jobs_csv_path": export_info.get("remote_jobs_csv_path", ""),
+            "remote_jobs_xlsx_path": export_info.get("remote_jobs_xlsx_path", ""),
             "phd_report_csv_path": export_info.get("phd_report_csv_path", ""),
             "phd_report_xlsx_path": export_info.get("phd_report_xlsx_path", ""),
             "remote_export": export_info["remote_status"],
+            "jobs_remote_export": export_info.get("jobs_remote_status", ""),
+            "remote_jobs_remote_export": export_info.get("remote_jobs_remote_status", ""),
             "email_sent": email_sent,
             "summary": summary,
             "output_dir": str(output_dir),
@@ -107,19 +115,33 @@ class AutomationPipeline:
         logger.info("Pipeline run %s complete", run_id)
         return result
 
-    def _persist_artifacts(self, output_dir: Path, match: MatchResult) -> None:
+    def _persist_artifacts(
+        self,
+        output_dir: Path,
+        match: MatchResult,
+        latex_renderer: LatexResumeRenderer,
+    ) -> None:
         artifact_dir = output_dir / "applications" / match.job.storage_slug()
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        resume_path = artifact_dir / "resume.txt"
+        resume_text_path = artifact_dir / "resume.txt"
         cover_letter_path = artifact_dir / "cover_letter.txt"
         email_intro_path = artifact_dir / "email_intro.txt"
 
-        resume_path.write_text(match.artifacts.resume_markdown, encoding="utf-8")
+        resume_text_path.write_text(match.artifacts.resume_markdown, encoding="utf-8")
         cover_letter_path.write_text(match.artifacts.cover_letter_markdown, encoding="utf-8")
         email_intro_path.write_text(match.artifacts.email_intro, encoding="utf-8")
 
-        match.artifacts.resume_path = resume_path
+        resume_pdf_path = latex_renderer.render_resume_pdf(
+            artifact_dir=artifact_dir,
+            doc_title=match.artifacts.resume_doc_title
+            or f"Resume - {match.job.job_title} @ {match.job.company_name}",
+            resume_text=match.artifacts.resume_markdown,
+        )
+
+        match.artifacts.resume_text_path = resume_text_path
+        match.artifacts.resume_pdf_path = resume_pdf_path
+        match.artifacts.resume_path = resume_pdf_path or resume_text_path
         match.artifacts.cover_letter_path = cover_letter_path
         match.artifacts.email_intro_path = email_intro_path
 
@@ -135,6 +157,62 @@ class AutomationPipeline:
                 job.job_title.lower(),
             ),
         )
+
+    def _filter_recent_jobs(self, jobs: list[JobListing]) -> list[JobListing]:
+        max_hours = max(1, int(self.settings.hours_old))
+        kept: list[JobListing] = []
+        unknown_age: list[JobListing] = []
+
+        for job in jobs:
+            age_hours = self._posted_text_to_hours(job.job_posted_time)
+            if age_hours is None:
+                unknown_age.append(job)
+                continue
+            if age_hours <= max_hours:
+                kept.append(job)
+
+        if kept:
+            logger.info(
+                "Weekly recency filter kept %s/%s jobs (<= %s hours)",
+                len(kept),
+                len(jobs),
+                max_hours,
+            )
+            return kept + unknown_age
+
+        # If parsing fails for all or source data is sparse, avoid dropping everything.
+        logger.info(
+            "Weekly recency filter could not keep any explicit jobs; using unfiltered set (%s jobs)",
+            len(jobs),
+        )
+        return jobs
+
+    @staticmethod
+    def _posted_text_to_hours(value: str) -> float | None:
+        text = (value or "").strip().lower()
+        if not text:
+            return None
+        if any(token in text for token in ("just now", "today", "moments ago")):
+            return 0.0
+
+        match = re.search(
+            r"(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>minute|minutes|min|hour|hours|hr|hrs|day|days|week|weeks)",
+            text,
+        )
+        if not match:
+            return None
+
+        amount = float(match.group("num"))
+        unit = match.group("unit")
+        if unit.startswith(("minute", "min")):
+            return amount / 60.0
+        if unit.startswith(("hour", "hr")):
+            return amount
+        if unit.startswith("day"):
+            return amount * 24.0
+        if unit.startswith("week"):
+            return amount * 24.0 * 7.0
+        return None
 
     @staticmethod
     def _normalize_job_item(item: dict) -> dict:

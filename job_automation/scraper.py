@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from dataclasses import asdict
+from functools import lru_cache
 import logging
+from pathlib import Path
 import random
+import sys
 from threading import Lock
 import time
 
@@ -13,6 +16,7 @@ from job_automation.models import JobListing, SearchTarget
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
 def _load_scrape_jobs():
     try:
         from jobspy import scrape_jobs
@@ -22,10 +26,23 @@ def _load_scrape_jobs():
         try:
             from python_jobspy.jobspy import scrape_jobs
         except ImportError as exc:
-            raise RuntimeError(
-                "Missing dependency: python-jobspy/jobspy. Install requirements first with "
+            current_python = Path(sys.executable)
+            message = (
+                "Missing dependency: python-jobspy/jobspy is not available in the active "
+                f"interpreter: {current_python}. Install requirements with "
                 "`pip install -r requirements.txt`."
-            ) from exc
+            )
+
+            project_root = Path(__file__).resolve().parent.parent
+            venv_python = project_root / ".venv" / "bin" / "python"
+            if venv_python.exists() and current_python != venv_python:
+                message += (
+                    f" This repo already has a virtualenv at {venv_python}; run the command with "
+                    f"`{venv_python} main.py ...` or activate it first with "
+                    "`source .venv/bin/activate`."
+                )
+
+            raise RuntimeError(message) from exc
 
         return scrape_jobs
 
@@ -37,6 +54,8 @@ class JobScraper:
         self._seen_keys: set[str] = set()
 
     def scrape_all(self) -> dict:
+        _load_scrape_jobs()
+
         targets = self.settings.build_targets()
         random.shuffle(targets)
         start = time.time()
@@ -164,6 +183,9 @@ class JobScraper:
                 if not url:
                     continue
 
+                raw_payload = row.to_dict()
+                raw_payload["search_target_remote"] = target.remote
+
                 listing = JobListing(
                     job_title=self._clean_text(row.get("title", "")),
                     company_name=self._clean_text(row.get("company", "")),
@@ -180,7 +202,7 @@ class JobScraper:
                     source_site=self._clean_text(row.get("site", "")),
                     search_title=target.job_title,
                     search_country=target.country_code,
-                    raw=row.to_dict(),
+                    raw=raw_payload,
                 )
 
                 dedupe_key = listing.dedupe_key()

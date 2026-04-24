@@ -73,10 +73,12 @@ class Settings:
 
     google_sheets_spreadsheet_id: str | None = None
     google_sheets_worksheet: str = "Jobs"
+    google_sheets_remote_jobs_worksheet: str = "remote-jobs"
     google_sheets_phd_report_worksheet: str = "phd-research-report"
     google_service_account_json: Path | None = None
     google_apps_script_webapp_url: str | None = None
     google_drive_upload_enabled: bool = True
+    google_drive_upload_max_workers: int = 4
     google_drive_root_folder_id: str | None = None
     google_drive_root_folder_name: str = "JobAutomationAI-PhD-Applications"
     google_drive_public_links: bool = True
@@ -93,18 +95,47 @@ class Settings:
     daily_run_hour: int = 8
     daily_run_minute: int = 0
 
-    phd_portal_universities_url: str = (
-        "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it"
-    )
     phd_university_source_order: list[str] = field(
-        default_factory=lambda: ["seed_file", "phdportal", "fallback"]
+        default_factory=lambda: ["euraxess", "findaphd", "scholarshipdb", "fallback"]
     )
     phd_university_seed_file: Path | None = PROJECT_ROOT / "profiles" / "phd_universities_seed.csv"
+    phd_findaphd_url: str = "https://www.findaphd.com/phds/computer-science/"
+    phd_scholarshipdb_url: str = "https://scholarshipdb.net/PhD-scholarships/Computer-Science"
+    phd_euraxess_api_url: str = "https://euraxess.ec.europa.eu/jobs/search"
     phd_max_universities: int = 30
     phd_professors_per_university: int = 3
     phd_resolve_application_links: bool = True
     phd_application_link_max_seed_pages: int = 6
     phd_application_link_max_candidates: int = 40
+    phd_link_finder_max_workers: int = 8
+    phd_link_request_timeout_seconds: float = 12.0
+    phd_link_early_cutoff_score: int = 20
+    phd_minimum_fit_score: int = 50
+    phd_tech_field_keywords: list[str] = field(
+        default_factory=lambda: [
+            "computer science",
+            "software engineering",
+            "computer engineering",
+            "networking",
+            "network",
+            "high performance computing",
+            "hpc",
+            "parallel computing",
+            "distributed systems",
+            "systems",
+            "cloud computing",
+            "devops",
+            "artificial intelligence",
+            "machine learning",
+            "data science",
+            "cybersecurity",
+            "robotics",
+            "embedded systems",
+            "computer vision",
+            "natural language processing",
+            "nlp",
+        ]
+    )
     phd_subject_keywords: list[str] = field(
         default_factory=lambda: [
             "computer science",
@@ -213,6 +244,10 @@ def load_settings() -> Settings:
         tailor_top_n=int(os.getenv("TAILOR_TOP_N", "10")),
         google_sheets_spreadsheet_id=os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID") or None,
         google_sheets_worksheet=os.getenv("GOOGLE_SHEETS_WORKSHEET", "Jobs"),
+        google_sheets_remote_jobs_worksheet=os.getenv(
+            "GOOGLE_SHEETS_REMOTE_JOBS_WORKSHEET",
+            "remote-jobs",
+        ),
         google_sheets_phd_report_worksheet=os.getenv(
             "GOOGLE_SHEETS_PHD_REPORT_WORKSHEET",
             "phd-research-report",
@@ -220,6 +255,7 @@ def load_settings() -> Settings:
         google_service_account_json=_path(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
         google_apps_script_webapp_url=os.getenv("GOOGLE_APPS_SCRIPT_WEBAPP_URL") or None,
         google_drive_upload_enabled=_as_bool(os.getenv("GOOGLE_DRIVE_UPLOAD_ENABLED"), default=True),
+        google_drive_upload_max_workers=int(os.getenv("GOOGLE_DRIVE_UPLOAD_MAX_WORKERS", "4")),
         google_drive_root_folder_id=os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID") or None,
         google_drive_root_folder_name=os.getenv(
             "GOOGLE_DRIVE_ROOT_FOLDER_NAME",
@@ -242,17 +278,25 @@ def load_settings() -> Settings:
         smtp_use_tls=_as_bool(os.getenv("SMTP_USE_TLS"), default=True),
         daily_run_hour=int(os.getenv("DAILY_RUN_HOUR", "8")),
         daily_run_minute=int(os.getenv("DAILY_RUN_MINUTE", "0")),
-        phd_portal_universities_url=os.getenv(
-            "PHD_PORTAL_UNIVERSITIES_URL",
-            "https://www.phdportal.com/search/universities/phd/rankings/computer-science-it",
-        ),
         phd_university_source_order=_csv(
             os.getenv("PHD_UNIVERSITY_SOURCE_ORDER"),
-            ["seed_file", "phdportal", "fallback"],
+            ["euraxess", "findaphd", "scholarshipdb", "fallback"],
         ),
         phd_university_seed_file=_path(
             os.getenv("PHD_UNIVERSITY_SEED_FILE"),
             PROJECT_ROOT / "profiles" / "phd_universities_seed.csv",
+        ),
+        phd_findaphd_url=os.getenv(
+            "PHD_FINDAPHD_URL",
+            "https://www.findaphd.com/phds/computer-science/",
+        ),
+        phd_scholarshipdb_url=os.getenv(
+            "PHD_SCHOLARSHIPDB_URL",
+            "https://scholarshipdb.net/PhD-scholarships/Computer-Science",
+        ),
+        phd_euraxess_api_url=os.getenv(
+            "PHD_EURAXESS_API_URL",
+            "https://euraxess.ec.europa.eu/jobs/search",
         ),
         phd_max_universities=int(os.getenv("PHD_MAX_UNIVERSITIES", "30")),
         phd_professors_per_university=int(
@@ -267,6 +311,42 @@ def load_settings() -> Settings:
         ),
         phd_application_link_max_candidates=int(
             os.getenv("PHD_APPLICATION_LINK_MAX_CANDIDATES", "40")
+        ),
+        phd_link_finder_max_workers=int(
+            os.getenv("PHD_LINK_FINDER_MAX_WORKERS", "8")
+        ),
+        phd_link_request_timeout_seconds=float(
+            os.getenv("PHD_LINK_REQUEST_TIMEOUT_SECONDS", "12")
+        ),
+        phd_link_early_cutoff_score=int(
+            os.getenv("PHD_LINK_EARLY_CUTOFF_SCORE", "20")
+        ),
+        phd_minimum_fit_score=int(os.getenv("PHD_MINIMUM_FIT_SCORE", "50")),
+        phd_tech_field_keywords=_csv(
+            os.getenv("PHD_TECH_FIELD_KEYWORDS"),
+            [
+                "computer science",
+                "software engineering",
+                "computer engineering",
+                "networking",
+                "network",
+                "high performance computing",
+                "hpc",
+                "parallel computing",
+                "distributed systems",
+                "systems",
+                "cloud computing",
+                "devops",
+                "artificial intelligence",
+                "machine learning",
+                "data science",
+                "cybersecurity",
+                "robotics",
+                "embedded systems",
+                "computer vision",
+                "natural language processing",
+                "nlp",
+            ],
         ),
         phd_subject_keywords=_csv(
             os.getenv("PHD_SUBJECT_KEYWORDS"),
